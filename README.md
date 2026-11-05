@@ -1,60 +1,86 @@
 # XBuilder for CLI
 
-XBuilder is a dedicated IDE for the XGo language, used to build games, animations, robotics applications, and more. Code agents such as Claude Code, Codex, and dsh can read and write code, but they cannot reach XBuilder's project management, asset handling, preview, or publishing features. XBuilder CLI exposes these capabilities on the command line so agents and humans can work on the same project.
+XBuilder is a dedicated IDE for the XGo language, used to build games, animations, robotics applications, and more. Code agents such as Claude Code, Codex, and dsh can read and write code, but they cannot reach XBuilder's project management, asset handling, or publishing features. `xb`, the XBuilder CLI, exposes these capabilities on the command line, with a GitHub-style workflow for getting projects from and to the cloud, so agents and humans can work on the same project.
 
 ## Goals
 
-- **Capability parity.** Anything essential you can do in the IDE, you can do from the CLI.
+- **Capability parity.** Anything essential you can do in the IDE, you can do from `xb`.
+- **Familiar workflow.** `xb clone`, `xb new`, `xb push`, and `xb pull` work like their GitHub counterparts, minus the version-control ceremony.
 - **Agent-friendly.** Predictable behavior, parsable output, actionable errors, no interactive prompts.
-- **Shared core.** The CLI and the IDE use the same project model, checks, and build pipeline.
-- **Seamless handoff.** A project edited through the CLI opens in the IDE, and vice versa.
+- **Shared core.** `xb` and the IDE use the same project model, checks, and build pipeline.
+- **Seamless handoff.** A project edited through `xb` opens in the IDE, and vice versa.
 
 ## Non-Goals
 
 - No graphical editing in the CLI (sprite editing, stage layout, etc.).
-- Does not replace the `xgo` command; it orchestrates at the XBuilder project level.
+- Does not replace the `xgo` command; `xb run` simply delegates to it.
+- Not a general-purpose Git client. Cloud sync is built in and requires no Git knowledge.
 - No agent-specific protocol: any agent that can run commands and read output can use it.
 
 ## Commands (Draft)
 
+### Cloud workflow
+
 | Command | Purpose |
 |---|---|
-| `xbuilder new` | Create a project from a template |
-| `xbuilder info` | Summarize project structure: characters, scenes, assets, dependencies |
-| `xbuilder check` | Check code and assets; report problems with locations |
-| `xbuilder run` | Run the project, windowed or headless |
-| `xbuilder build` | Build and package |
-| `xbuilder asset` | Import, list, validate, rename assets |
-| `xbuilder export` | Export in a distributable form |
-| `xbuilder publish` | Publish to a target platform |
+| `xb clone <ProjectName>` | Download a project from the cloud into a local directory |
+| `xb new <ProjectName>` | Create a new project (locally and in the cloud) from a template |
+| `xb push` | Upload the current project to the cloud |
+| `xb pull` | Fetch updates made elsewhere (the IDE, other machines, other agents) and apply them locally |
 
-A typical agent loop:
+`xb push` needs no `add`, no `commit`, and no `.gitignore`. It uploads the project as it currently is and automatically skips content that is not part of the project's source, such as build outputs, caches, and temporary files. Use `--dry-run` to preview exactly what would be uploaded.
+
+Because the cloud copy may be changed from other clients at any time, `xb push` stops with a clear message if the cloud version is newer, instead of overwriting it. Run `xb pull` first. If a pull touches files that were also modified locally, `xb pull` reports the affected files and never overwrites local work silently.
+
+### Authentication
+
+Modeled on the GitHub CLI (`gh auth`):
+
+| Command | Purpose |
+|---|---|
+| `xb auth login` | Sign in through the browser (device-code flow) |
+| `xb auth login --with-token` | Sign in non-interactively by reading a token from stdin |
+| `xb auth status` | Show the current account and token validity |
+| `xb auth logout` | Remove stored credentials |
+
+Credentials are kept in the system keychain where available. For agents and CI, the `XB_TOKEN` environment variable takes precedence over stored credentials, so no login step is needed.
+
+### Project workflow
+
+| Command | Purpose |
+|---|---|
+| `xb info` | Summarize project structure: characters, scenes, assets, dependencies |
+| `xb check` | Check code and assets; report problems with locations |
+| `xb run` | Run the project; equivalent to `xgo run` |
+| `xb build` | Build and package |
+| `xb asset` | Import, list, validate, rename assets |
+| `xb export` | Export in a distributable form |
+| `xb publish` | Publish to a target platform |
+
+A typical agent session:
 
 ```
-xbuilder info --json
-xbuilder check --json
-xbuilder run --headless --duration 5s --json
+xb clone MyGame
+cd MyGame
+xb info --json
+xb check --json
+xb run
+xb pull
+xb push
 ```
 
 ## Design Principles for Agents
 
-- Every command supports `--json` with stable, structured output.
-- Distinct exit codes for success, failed checks, usage errors, and internal errors.
-- Never block on input; missing arguments produce an error explaining how to fix the call.
+- Commands that report structured information (`info`, `check`, `asset`, and so on) support `--json` with stable output.
+- Distinct exit codes for success, failed checks, usage errors, auth errors, sync conflicts, and internal errors.
+- Never block on input; missing arguments or missing login produce an error explaining how to fix the call.
 - Errors include file, location, and a suggested fix.
-- Idempotent operations; file-modifying commands support `--dry-run`.
-- Headless runs return logs, events, and screenshots so agents can observe results.
+- Idempotent operations; commands that modify files or the cloud support `--dry-run`.
 - Ship a short `AGENTS.md` / `CLAUDE.md` snippet describing conventions and common commands.
-
-## Milestones
-
-1. **Read-only:** `info`, `check`.
-2. **Run and build:** `run` (including headless), `build`.
-3. **Assets and creation:** `new`, `asset`.
-4. **Distribution:** `export`, `publish`, CI guidance, agent onboarding docs.
 
 ## Success Criteria
 
-- A new agent, given only the docs, can create, modify, check, run, and fix a project without human help.
-- A project moves between the CLI and the IDE without losing state.
-- Agents can use CLI output directly for their next decision, with no extra parsing glue.
+- A new agent, given only the docs, can clone or create a project, modify it, check, run, fix, and sync with the cloud without human help.
+- A project moves between `xb` and the IDE without losing state.
+- Agents can use `xb` output directly for their next decision, with no extra parsing glue.
+
