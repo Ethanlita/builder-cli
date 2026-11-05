@@ -51,11 +51,9 @@ Credentials are kept in the system keychain where available. For agents and CI, 
 |---|---|
 | `xb info` | Summarize project structure: characters, scenes, assets, dependencies |
 | `xb check` | Check code and assets; report problems with locations |
-| `xb run` | Run the project; equivalent to `xgo run` |
-| `xb build` | Build and package |
+| `xb run` | Run the project; equivalent to `xgo run .` |
 | `xb asset` | Import, list, validate, rename assets |
 | `xb export` | Export in a distributable form |
-| `xb publish` | Publish to a target platform |
 
 A typical agent session:
 
