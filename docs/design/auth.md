@@ -6,17 +6,10 @@ This document defines how `xb auth` signs in, how credentials are stored, and ho
 
 ## Scope
 
-In scope:
-
 - Sign in to an XBuilder account through the browser. Tokens are stored on the machine and refreshed automatically
 - Stay signed in to several environments at once (global production, China production, staging, and environments the user adds), with more than one account per environment
 - Sign in with an access token issued by an administrator, for cases where browser sign-in is not possible
 - Switch between signed-in sessions
-
-Out of scope:
-
-- Device code sign-in. Machines without a browser are not supported for now
-- Supplying a token through an environment variable
 
 ## Sign-in flow
 
