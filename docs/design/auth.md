@@ -115,8 +115,23 @@ Users add other environments (temporary test environments, a local backend). The
 
 ```
 xb env add <name> --api-url <API URL> --client-id <clientID>
-xb env list
+xb env list [--json]
 xb env remove <name>
+```
+
+`xb env list` lists the built-in environments and the ones the user has added. For each it gives the name, the API URL, whether it is built in, and its sessions. It reads only local configuration and does not access the network. Output of `--json`:
+
+```json
+{
+  "environments": [
+    {
+      "name": "staging",
+      "apiURL": "https://goplus-builder-api.qiniu.io",
+      "builtin": true,
+      "sessions": ["curator@staging"]
+    }
+  ]
+}
 ```
 
 Constraints on `xb env add`:
@@ -199,7 +214,13 @@ When `--env` is omitted, `xb auth login` picks the environment in this order (ex
 
 1. Inside a project directory, the project's environment
 2. Otherwise the environment of the current session
-3. With no current session, it fails and asks for `--env`
+3. With no current session, it fails, asks for `--env`, and lists the available environment names:
+
+```
+error: --env is required
+available environments: xbuilder.com, x.qiniu.com, staging
+run: xb auth login --env <name>
+```
 
 When the resulting session already exists, its credentials are replaced:
 
@@ -241,7 +262,7 @@ Output of `xb auth status --json`:
 - Describe `xb auth login` as browser sign-in with a loopback callback instead of device code
 - Keep `xb auth login --with-token`. Add where the token comes from and how the environment is chosen
 - Remove the description of `XB_TOKEN`. Add the file fallback to the description of the system keychain
-- Add environments and sessions, the `xb env` and `xb auth switch` commands, and the `--session` flag
+- Add environments and sessions, the `xb env` and `xb auth switch` commands, and the `--session` flag. Say that `xb env list` shows the available environment names
 
 ## Verification
 

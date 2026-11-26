@@ -115,8 +115,23 @@ sequenceDiagram
 
 ```
 xb env add <名称> --api-url <后端地址> --client-id <clientID>
-xb env list
+xb env list [--json]
 xb env remove <名称>
+```
+
+`xb env list` 列出内置环境和用户添加的环境，每个环境给出名称、后端地址、是否内置、已有的会话。它只读取本地配置，不访问网络。`--json` 的输出：
+
+```json
+{
+  "environments": [
+    {
+      "name": "staging",
+      "apiURL": "https://goplus-builder-api.qiniu.io",
+      "builtin": true,
+      "sessions": ["curator@staging"]
+    }
+  ]
+}
 ```
 
 `xb env add` 的约束：
@@ -199,7 +214,13 @@ access token 有效期 5 分钟，refresh token 30 天，每次续期后重新�
 
 1. 在项目目录内时使用项目所属的环境
 2. 否则使用当前会话的环境
-3. 没有当前会话时报错，要求给出 `--env`
+3. 没有当前会话时报错，要求给出 `--env`，并列出可用的环境名称：
+
+```
+error: --env is required
+available environments: xbuilder.com, x.qiniu.com, staging
+run: xb auth login --env <name>
+```
 
 登录得到的会话已存在时，替换它的凭证：
 
@@ -241,7 +262,7 @@ run: xb auth login --env staging
 - `xb auth login` 的说明由 device-code 改为浏览器加本机回调
 - `xb auth login --with-token` 保留，补充令牌的来源和环境的选择
 - 删除 `XB_TOKEN` 的描述；系统钥匙串的描述补上不可用时改存文件
-- 增加环境与会话的说明，以及 `xb env`、`xb auth switch` 命令和 `--session` 参数
+- 增加环境与会话的说明，以及 `xb env`、`xb auth switch` 命令和 `--session` 参数，说明用 `xb env list` 查看可用的环境名称
 
 ## 验证
 
