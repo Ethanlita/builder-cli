@@ -10,12 +10,13 @@ English version: [auth.md](./auth.md)
 
 - 通过浏览器登录 XBuilder 账号，令牌保存在本机并自动续期
 - 同时登录多个环境（线上海外、线上国内、staging，以及自行添加的环境），同一个环境可以登录多个账号
+- 用管理员签发的 access token 登录，供不能使用浏览器登录的场合使用
 - 在已登录的会话之间切换
 
 不做：
 
 - device code 登录（没有浏览器的机器暂不支持）
-- 通过环境变量或参数手动提供令牌
+- 通过环境变量提供令牌
 
 ## 登录流程
 
@@ -56,6 +57,32 @@ sequenceDiagram
 
 - PAR 返回的 `request_uri` 有效期 10 分钟，必须在此之前用它打开授权页
 - `xb` 从打印授权地址起最多等待回调 15 分钟，超时则登录失败
+
+## 用令牌登录
+
+`xb auth login --with-token` 不经过浏览器，直接用一个已有的 access token 建立会话。它用于浏览器不在同一台机器上的场合（SSH、云端沙箱、CI）。
+
+令牌由账号管理员在管理后台为某个用户对 xbuilder app 的授权签发：
+
+- 签发时指定到期时间，最长 365 天
+- 只有 access token，没有 refresh token，到期后需要重新签发并重新登录
+- 签发时选择的 client 不限于 `cli`，xbuilder app 下任意 client 签发的令牌都可以使用
+
+流程：
+
+1. `xb` 从标准输入读取一行作为令牌。令牌不通过命令行参数传入，以免留在 shell 历史和进程列表里
+2. 用这个令牌请求 `GET /user`，成功则得到用户名，失败则报错，不创建会话
+3. 创建会话 `<用户名>@<环境名>` 并保存令牌，新会话成为当前会话
+
+环境的选择规则和浏览器登录相同（见"命令"）。
+
+用令牌登录的会话与浏览器登录的会话有以下区别：
+
+- 不续期，也不使用续期的锁
+- `xb` 无法得知令牌的到期时间：令牌不透明，而查询令牌状态的接口只对 confidential client 开放。接口返回 401 时，`xb` 删除该会话的凭证，把会话标为已失效，并按认证错误报错
+- `xb auth logout` 只删除本地凭证，不撤销令牌：撤销接口只接受签发给请求方 client 的令牌，而这个令牌可能签发给别的 client。需要作废令牌时，由管理员在管理后台撤销
+
+这种令牌有效期长，泄露后在到期或被撤销前一直可用。能用浏览器登录时应使用浏览器登录。
 
 ## 依赖的后端改动
 
@@ -134,7 +161,7 @@ XBuilder 的用户名只包含字母、数字、`_`、`-`。后端返回的用�
 
 ## 凭证保存
 
-每个会话的凭证包括 refresh token、access token 及其到期时间。
+浏览器登录的会话，凭证包括 refresh token、access token 及其到期时间。用令牌登录的会话，凭证只有那个 access token。两种凭证的保存方式相同。
 
 凭证默认保存在系统的凭据存储里，每个会话一个条目：macOS 钥匙串、Windows 凭据管理器、Linux Secret Service。登录时写入凭据存储失败（没有桌面会话、沙箱中不可访问）则改为保存成文件，并在标准错误提示。
 
@@ -145,7 +172,7 @@ XBuilder 的用户名只包含字母、数字、`_`、`-`。后端返回的用�
 - 文件仅本人可读写。写入时在同一目录下以仅本人可读写的权限新建临时文件，写完后改名替换
 - Windows 上用仅本人可访问的 ACL 达到相同效果
 
-用户配置目录的 `xb/config.json` 保存不属于机密的内容：自行添加的环境、会话列表（名称、环境、用户名、凭证存放位置、是否已失效）和当前会话。修改这个文件时先取得它的锁，重新读取后再修改，以写临时文件再改名的方式替换。持有这把锁期间不访问网络。
+用户配置目录的 `xb/config.json` 保存不属于机密的内容：自行添加的环境、会话列表（名称、环境、用户名、登录方式、凭证存放位置、是否已失效）和当前会话。修改这个文件时先取得它的锁，重新读取后再修改，以写临时文件再改名的方式替换。持有这把锁期间不访问网络。
 
 会话的凭证在凭据存储里、而运行时凭据存储不可访问（例如在桌面登录，在沙箱里运行命令）时，按认证错误处理，提示重新登录。
 
@@ -167,9 +194,10 @@ access token 有效期 5 分钟，refresh token 30 天，每次续期后重新�
 | 命令 | 行为 |
 | - | - |
 | `xb auth login [--env <名称>] [--no-browser]` | 登录并创建会话，新会话成为当前会话。默认打开浏览器，同时把授权地址打印到标准错误；`--no-browser` 只打印地址 |
-| `xb auth status [--json]` | 列出全部会话：名称、环境、用户名、是否为当前会话、是否已失效、凭证存放位置 |
+| `xb auth login --with-token [--env <名称>]` | 从标准输入读取 access token 并创建会话，新会话成为当前会话。不打开浏览器 |
+| `xb auth status [--json]` | 列出全部会话：名称、环境、用户名、登录方式、是否为当前会话、是否已失效、凭证存放位置 |
 | `xb auth switch <会话>` | 把当前会话改为指定的会话 |
-| `xb auth logout [<会话>]` | 撤销 refresh token，删除本地凭证和会话，默认针对当前会话。撤销请求失败时仍然删除，并提示。退出的是当前会话时，之后没有当前会话 |
+| `xb auth logout [<会话>]` | 删除本地凭证和会话，默认针对当前会话。浏览器登录的会话先撤销 refresh token，撤销请求失败时仍然删除，并提示。退出的是当前会话时，之后没有当前会话 |
 
 `xb auth login` 省略 `--env` 时按以下顺序决定环境：
 
@@ -179,12 +207,12 @@ access token 有效期 5 分钟，refresh token 30 天，每次续期后重新�
 
 登录得到的会话已存在时，替换它的凭证：
 
-- 新凭证保存成功后，撤销旧的 refresh token。撤销失败只提示，不影响登录结果
+- 新凭证保存成功后，撤销旧的 refresh token（旧会话是浏览器登录时）。撤销失败只提示，不影响登录结果
 - 新旧凭证的存放位置不同（凭据存储与文件）时，删除旧位置上的凭证
 
 `xb auth status` 只读取 `xb/config.json`，不读取凭证，不续期，不访问网络。因此它不反映 refresh token 因 30 天未使用而过期的情况，这种情况在下一次使用该会话时才会被标为已失效。
 
-`xb auth login` 是唯一需要人参与的命令，它等待的是浏览器回调，不读取终端输入。`xb auth switch` 不提供交互式选择，必须给出会话名。其他命令在没有可用会话或凭证失效时不会发起登录，而是以认证错误的退出码结束，错误信息给出应执行的命令，例如：
+`xb auth login` 是唯一需要人参与的命令。浏览器登录等待的是浏览器回调，不读取终端输入；`--with-token` 只从标准输入读取令牌，不显示提示。`xb auth switch` 不提供交互式选择，必须给出会话名。其他命令在没有可用会话或凭证失效时不会发起登录，而是以认证错误的退出码结束，错误信息给出应执行的命令，例如：
 
 ```
 error: session curator@staging has expired
@@ -201,6 +229,7 @@ run: xb auth login --env staging
       "environment": "staging",
       "apiURL": "https://goplus-builder-api.qiniu.io",
       "username": "curator",
+      "method": "browser",
       "current": true,
       "signedIn": true,
       "storage": "keychain"
@@ -209,12 +238,12 @@ run: xb auth login --env staging
 }
 ```
 
-`signedIn` 在会话被标为已失效时为 `false`。`storage` 为 `keychain` 或 `file`。
+`method` 为 `browser` 或 `token`。`signedIn` 在会话被标为已失效时为 `false`。`storage` 为 `keychain` 或 `file`。
 
 ## 对 README 的修改
 
 - `xb auth login` 的说明由 device-code 改为浏览器加本机回调
-- 删除 `xb auth login --with-token`
+- `xb auth login --with-token` 保留，补充令牌的来源和环境的选择
 - 删除 `XB_TOKEN` 的描述；系统钥匙串的描述补上不可用时改存文件
 - 增加环境与会话的说明，以及 `xb env`、`xb auth switch` 命令和 `--session` 参数
 
@@ -229,6 +258,7 @@ run: xb auth login --env staging
 5. 在凭据存储不可访问的环境里登录，凭证改存文件，第 3 步同样通过
 6. `xb auth logout` 后，原 refresh token 不能再续期
 7. 没有可用会话时运行需要认证的命令，得到认证错误的退出码和提示
+8. 在管理后台签发一个 access token，用 `xb auth login --with-token` 登录后命令可用；在管理后台撤销该令牌后，下一条命令把会话标为已失效
 
 ## 待定
 

@@ -10,12 +10,13 @@ In scope:
 
 - Sign in to an XBuilder account through the browser. Tokens are stored on the machine and refreshed automatically
 - Stay signed in to several environments at once (global production, China production, staging, and environments the user adds), with more than one account per environment
+- Sign in with an access token issued by an administrator, for cases where browser sign-in is not possible
 - Switch between signed-in sessions
 
 Out of scope:
 
 - Device code sign-in. Machines without a browser are not supported for now
-- Supplying a token manually through an environment variable or a flag
+- Supplying a token through an environment variable
 
 ## Sign-in flow
 
@@ -56,6 +57,32 @@ Sign-in has two time limits:
 
 - The `request_uri` returned by PAR is valid for 10 minutes and must be used to open the authorize page before it expires
 - `xb` waits for the callback for at most 15 minutes after printing the authorize URL, then fails
+
+## Signing in with a token
+
+`xb auth login --with-token` creates a session from an existing access token without going through the browser. It is for cases where the browser is not on the same machine (SSH, cloud sandboxes, CI).
+
+An account administrator issues the token in the admin console for a user's grant on the xbuilder app:
+
+- The expiry time is set when the token is issued, at most 365 days ahead
+- It is an access token only, with no refresh token. After it expires, a new token has to be issued and the user signs in again
+- The client chosen when issuing does not have to be `cli`. A token issued to any client under the xbuilder app works
+
+Flow:
+
+1. `xb` reads one line from standard input as the token. The token is not passed as a command-line argument, so it stays out of shell history and the process list
+2. It requests `GET /user` with the token. On success it gets the username. On failure it reports an error and creates no session
+3. It creates the session `<username>@<environment>` and stores the token. The new session becomes the current session
+
+The environment is chosen the same way as for browser sign-in (see "Commands").
+
+A token session differs from a browser session in these ways:
+
+- It is never refreshed and does not use the refresh lock
+- `xb` cannot know when the token expires: the token is opaque, and the introspection endpoint is only open to confidential clients. When the API returns 401, `xb` deletes the session's credentials, marks the session as expired, and fails with an authentication error
+- `xb auth logout` only deletes the local credentials and does not revoke the token: the revoke endpoint only accepts tokens issued to the requesting client, and this token may have been issued to another client. To invalidate the token, an administrator revokes it in the admin console
+
+Such a token is long-lived and stays usable after a leak until it expires or is revoked. Use browser sign-in whenever it is possible.
 
 ## Required backend change
 
@@ -134,7 +161,7 @@ The same course has a different course ID in each environment. The mapping betwe
 
 ## Credential storage
 
-The credentials of a session are the refresh token, the access token, and the access token's expiry time.
+The credentials of a browser session are the refresh token, the access token, and the access token's expiry time. The credentials of a token session are that one access token. Both are stored the same way.
 
 By default credentials are kept in the system credential store, one entry per session: macOS Keychain, Windows Credential Manager, or the Linux Secret Service. If writing to the credential store fails at sign-in (no desktop session, not reachable from a sandbox), `xb` saves the credentials to a file instead and says so on standard error.
 
@@ -145,7 +172,7 @@ Rules for credential files:
 - Only the owner can read and write a file. A write creates a temporary file in the same directory with owner-only permissions, then renames it over the target
 - On Windows an owner-only ACL gives the same effect
 
-`xb/config.json` in the user configuration directory holds what is not secret: user-added environments, the session list (name, environment, username, storage location, whether it has expired), and the current session. A change to this file takes the file's lock, re-reads the file, applies the change, and replaces the file by writing a temporary file and renaming it. No network access happens while this lock is held.
+`xb/config.json` in the user configuration directory holds what is not secret: user-added environments, the session list (name, environment, username, sign-in method, storage location, whether it has expired), and the current session. A change to this file takes the file's lock, re-reads the file, applies the change, and replaces the file by writing a temporary file and renaming it. No network access happens while this lock is held.
 
 If a session's credentials are in the credential store and the store is not reachable at run time (for example, signed in on the desktop and running commands in a sandbox), the command fails with an authentication error and asks the user to sign in again.
 
@@ -167,9 +194,10 @@ When a refresh returns `invalid_grant` (the token expired or was revoked), `xb` 
 | Command | Behavior |
 | - | - |
 | `xb auth login [--env <name>] [--no-browser]` | Signs in and creates a session, which becomes the current session. Opens the browser by default and also prints the authorize URL to standard error. `--no-browser` only prints the URL |
-| `xb auth status [--json]` | Lists all sessions: name, environment, username, whether it is current, whether it has expired, and where its credentials are stored |
+| `xb auth login --with-token [--env <name>]` | Reads an access token from standard input and creates a session, which becomes the current session. Does not open the browser |
+| `xb auth status [--json]` | Lists all sessions: name, environment, username, sign-in method, whether it is current, whether it has expired, and where its credentials are stored |
 | `xb auth switch <session>` | Makes the given session current |
-| `xb auth logout [<session>]` | Revokes the refresh token and deletes the local credentials and the session. Defaults to the current session. If the revoke request fails, the local data is still deleted and a notice is printed. After signing out of the current session there is no current session |
+| `xb auth logout [<session>]` | Deletes the local credentials and the session. Defaults to the current session. For a browser session it first revokes the refresh token. If the revoke request fails, the local data is still deleted and a notice is printed. After signing out of the current session there is no current session |
 
 When `--env` is omitted, `xb auth login` picks the environment in this order:
 
@@ -179,12 +207,12 @@ When `--env` is omitted, `xb auth login` picks the environment in this order:
 
 When the resulting session already exists, its credentials are replaced:
 
-- After the new credentials are saved, the old refresh token is revoked. A failed revoke prints a notice and does not affect the sign-in
+- After the new credentials are saved, the old refresh token is revoked (when the old session was a browser session). A failed revoke prints a notice and does not affect the sign-in
 - If the old and new credentials are stored in different places (credential store and file), the old copy is deleted
 
 `xb auth status` reads only `xb/config.json`. It does not read credentials, refresh tokens, or access the network. It therefore does not show a refresh token that expired after 30 days without use. That session is marked as expired the next time it is used.
 
-`xb auth login` is the only command that needs a person. It waits for the browser callback and does not read from the terminal. `xb auth switch` has no interactive picker and requires a session name. Other commands never start a sign-in when no session is usable or the credentials have expired. They exit with the authentication error code, and the message gives the command to run, for example:
+`xb auth login` is the only command that needs a person. Browser sign-in waits for the browser callback and does not read from the terminal. `--with-token` only reads the token from standard input and shows no prompt. `xb auth switch` has no interactive picker and requires a session name. Other commands never start a sign-in when no session is usable or the credentials have expired. They exit with the authentication error code, and the message gives the command to run, for example:
 
 ```
 error: session curator@staging has expired
@@ -201,6 +229,7 @@ Output of `xb auth status --json`:
       "environment": "staging",
       "apiURL": "https://goplus-builder-api.qiniu.io",
       "username": "curator",
+      "method": "browser",
       "current": true,
       "signedIn": true,
       "storage": "keychain"
@@ -209,12 +238,12 @@ Output of `xb auth status --json`:
 }
 ```
 
-`signedIn` is `false` when the session is marked as expired. `storage` is `keychain` or `file`.
+`method` is `browser` or `token`. `signedIn` is `false` when the session is marked as expired. `storage` is `keychain` or `file`.
 
 ## Changes to the README
 
 - Describe `xb auth login` as browser sign-in with a loopback callback instead of device code
-- Remove `xb auth login --with-token`
+- Keep `xb auth login --with-token`. Add where the token comes from and how the environment is chosen
 - Remove the description of `XB_TOKEN`. Add the file fallback to the description of the system keychain
 - Add environments and sessions, the `xb env` and `xb auth switch` commands, and the `--session` flag
 
@@ -229,6 +258,7 @@ On staging:
 5. Sign in where the credential store is not reachable. The credentials are saved to a file, and step 3 passes there too
 6. After `xb auth logout`, the old refresh token can no longer be used to refresh
 7. Running an authenticated command with no usable session gives the authentication error code and message
+8. Issue an access token in the admin console. After `xb auth login --with-token`, commands work. After the token is revoked in the admin console, the next command marks the session as expired
 
 ## Open questions
 
