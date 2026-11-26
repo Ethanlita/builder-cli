@@ -61,13 +61,16 @@ An account administrator issues the token in the admin console for a user's gran
 - It is an access token only, with no refresh token. After it expires, a new token has to be issued and the user signs in again
 - The client chosen when issuing does not have to be `cli`. A token issued to any client under the xbuilder app works
 
-Flow:
+The token is not passed as a command-line argument, so it stays out of shell history and the process list. How `xb` gets the environment and the token depends on whether standard input is a terminal:
 
-1. `xb` reads one line from standard input as the token. The token is not passed as a command-line argument, so it stays out of shell history and the process list
-2. It requests `GET /user` with the token. On success it gets the username. On failure it reports an error and creates no session
-3. It creates the session `<username>@<environment>` and stores the token. The new session becomes the current session
+- When standard input is a terminal, `xb` is interactive. Without `--env` it lists the built-in environments and the ones the user has added, and the user picks one. An API URL cannot be typed in at this point. It then prompts for the token and does not echo the input
+- When standard input is not a terminal (a pipe, CI, an agent), `xb` shows no prompt and reads one line as the token. The environment is chosen the same way as for browser sign-in (see "Commands")
 
-The environment is chosen the same way as for browser sign-in (see "Commands").
+With the environment and the token:
+
+1. `xb` requests `GET /user` with the token. On success it gets the username. On failure it reports an error and creates no session
+2. It creates the session `<username>@<environment>` and stores the token. The new session becomes the current session
+3. It prints the name of the session
 
 A token session differs from a browser session in these ways:
 
@@ -187,12 +190,12 @@ When a refresh returns `invalid_grant` (the token expired or was revoked), `xb` 
 | Command | Behavior |
 | - | - |
 | `xb auth login [--env <name>] [--no-browser]` | Signs in and creates a session, which becomes the current session. Opens the browser by default and also prints the authorize URL to standard error. `--no-browser` only prints the URL |
-| `xb auth login --with-token [--env <name>]` | Reads an access token from standard input and creates a session, which becomes the current session. Does not open the browser |
+| `xb auth login --with-token [--env <name>]` | Creates a session from an access token, which becomes the current session. Does not open the browser. In a terminal it prompts for the environment and the token. Otherwise it reads the token from standard input |
 | `xb auth status [--json]` | Lists all sessions: name, environment, username, sign-in method, whether it is current, whether it has expired, and where its credentials are stored |
 | `xb auth switch <session>` | Makes the given session current |
 | `xb auth logout [<session>]` | Deletes the local credentials and the session. Defaults to the current session. For a browser session it first revokes the refresh token. If the revoke request fails, the local data is still deleted and a notice is printed. After signing out of the current session there is no current session |
 
-When `--env` is omitted, `xb auth login` picks the environment in this order:
+When `--env` is omitted, `xb auth login` picks the environment in this order (except in the interactive mode of `--with-token`, where the user picks it):
 
 1. Inside a project directory, the project's environment
 2. Otherwise the environment of the current session
@@ -205,7 +208,7 @@ When the resulting session already exists, its credentials are replaced:
 
 `xb auth status` reads only `xb/config.json`. It does not read credentials, refresh tokens, or access the network. It therefore does not show a refresh token that expired after 30 days without use. That session is marked as expired the next time it is used.
 
-`xb auth login` is the only command that needs a person. Browser sign-in waits for the browser callback and does not read from the terminal. `--with-token` only reads the token from standard input and shows no prompt. `xb auth switch` has no interactive picker and requires a session name. Other commands never start a sign-in when no session is usable or the credentials have expired. They exit with the authentication error code, and the message gives the command to run, for example:
+`xb auth login` is the only command that needs a person. Browser sign-in waits for the browser callback and does not read from the terminal. The interactive mode of `--with-token` is the only interactive input in `xb`, and it appears only when standard input is a terminal. `xb auth switch` has no interactive picker and requires a session name. Other commands never start a sign-in when no session is usable or the credentials have expired. They exit with the authentication error code, and the message gives the command to run, for example:
 
 ```
 error: session curator@staging has expired
@@ -251,7 +254,7 @@ On staging:
 5. Sign in where the credential store is not reachable. The credentials are saved to a file, and step 3 passes there too
 6. After `xb auth logout`, the old refresh token can no longer be used to refresh
 7. Running an authenticated command with no usable session gives the authentication error code and message
-8. Issue an access token in the admin console. After `xb auth login --with-token`, commands work. After the token is revoked in the admin console, the next command marks the session as expired
+8. Issue an access token in the admin console. Sign in with `xb auth login --with-token` once interactively in a terminal and once through a pipe. Commands work after each. After the token is revoked in the admin console, the next command marks the session as expired
 
 ## Open questions
 
